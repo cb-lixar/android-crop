@@ -360,11 +360,15 @@ public class CropImageActivity extends MonitoredActivity {
             }
 
             try {
-                croppedImage = decoder.decodeRegion(rect, new BitmapFactory.Options());
-                if (rect.width() > outWidth || rect.height() > outHeight) {
+                BitmapFactory.Options opts = new BitmapFactory.Options();
+                opts.inSampleSize = calculateBitmapSampleSize(rect.width(), rect.height(), outWidth * 2, outHeight * 2);
+                croppedImage = decoder.decodeRegion(rect, opts);
+                if (croppedImage == null)
+                    throw new IllegalArgumentException("Error cropping image.");
+                if (opts.outWidth > outWidth || opts.outHeight > outHeight) {
                     Matrix matrix = new Matrix();
-                    matrix.postScale((float) outWidth / rect.width(), (float) outHeight / rect.height());
-                    croppedImage = Bitmap.createBitmap(croppedImage, 0, 0, croppedImage.getWidth(), croppedImage.getHeight(), matrix, true);
+                    matrix.postScale((float) outWidth / opts.outWidth, (float) outHeight / opts.outHeight);
+                    croppedImage = Bitmap.createBitmap(croppedImage, 0, 0, opts.outWidth, opts.outHeight, matrix, true);
                 }
             } catch (IllegalArgumentException e) {
                 // Rethrow with some extra information
