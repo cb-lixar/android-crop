@@ -154,12 +154,22 @@ public class CropImageActivity extends MonitoredActivity {
             CropUtil.closeSilently(is);
         }
 
-        int maxSize = getMaxImageSize();
-        int sampleSize = 1;
-        while (options.outHeight / sampleSize > maxSize || options.outWidth / sampleSize > maxSize) {
-            sampleSize = sampleSize << 1;
-        }
-        return sampleSize;
+        int maxImageSize = getMaxImageSize();
+
+        return calculateBitmapSampleSize(options.outWidth, options.outHeight, maxImageSize, maxImageSize);
+    }
+
+    private int calculateBitmapSampleSize(int imageWidth, int imageHeight, int maxWidth, int maxHeight) throws IOException {
+        if (imageWidth <= maxWidth && imageHeight <= maxHeight)
+            return 1;
+
+        int ssWidth = (int)Math.ceil((double)imageWidth / (double)maxWidth);
+        int ssHeight = (int)Math.ceil((double)imageHeight / (double)maxHeight);
+
+        if (ssWidth > ssHeight)
+            return ssWidth;
+        else
+            return ssHeight;
     }
 
     private int getMaxImageSize() {
