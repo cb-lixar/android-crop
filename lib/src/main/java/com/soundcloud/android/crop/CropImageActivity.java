@@ -126,7 +126,7 @@ public class CropImageActivity extends MonitoredActivity {
 
             InputStream is = null;
             try {
-                sampleSize = calculateBitmapSampleSize(sourceUri);
+                sampleSize = ImageUtil.calculateBitmapSampleSize(this, sourceUri, getMaxImageSize());
                 is = getContentResolver().openInputStream(sourceUri);
                 BitmapFactory.Options option = new BitmapFactory.Options();
                 option.inSampleSize = sampleSize;
@@ -141,35 +141,6 @@ public class CropImageActivity extends MonitoredActivity {
                 CropUtil.closeSilently(is);
             }
         }
-    }
-
-    private int calculateBitmapSampleSize(Uri bitmapUri) throws IOException {
-        InputStream is = null;
-        BitmapFactory.Options options = new BitmapFactory.Options();
-        options.inJustDecodeBounds = true;
-        try {
-            is = getContentResolver().openInputStream(bitmapUri);
-            BitmapFactory.decodeStream(is, null, options); // Just get image size
-        } finally {
-            CropUtil.closeSilently(is);
-        }
-
-        int maxImageSize = getMaxImageSize();
-
-        return calculateBitmapSampleSize(options.outWidth, options.outHeight, maxImageSize, maxImageSize);
-    }
-
-    private int calculateBitmapSampleSize(int imageWidth, int imageHeight, int maxWidth, int maxHeight) throws IOException {
-        if (imageWidth <= maxWidth && imageHeight <= maxHeight)
-            return 1;
-
-        int ssWidth = (int)Math.ceil((double)imageWidth / (double)maxWidth);
-        int ssHeight = (int)Math.ceil((double)imageHeight / (double)maxHeight);
-
-        if (ssWidth > ssHeight)
-            return ssWidth;
-        else
-            return ssHeight;
     }
 
     private int getMaxImageSize() {
@@ -275,7 +246,7 @@ public class CropImageActivity extends MonitoredActivity {
         }
         isSaving = true;
 
-        Bitmap croppedImage;
+        Bitmap croppedImage = null;
         Rect r = cropView.getScaledCropRect(sampleSize);
         int width = r.width();
         int height = r.height();
@@ -294,7 +265,17 @@ public class CropImageActivity extends MonitoredActivity {
         }
 
         if (IN_MEMORY_CROP && rotateBitmap != null) {
-            croppedImage = inMemoryCrop(rotateBitmap, r, outWidth, outHeight);
+            try {
+                croppedImage = ImageUtil.inMemoryCrop(rotateBitmap, r, outWidth, outHeight);
+            } catch (OutOfMemoryError e) {
+                Log.e("OOM cropping image: " + e.getMessage(), e);
+                setResultException(e);
+            } finally {
+                // Release Bitmap memory as soon as possible
+                clearImageView();
+                System.gc();
+            }
+
             if (croppedImage != null) {
                 imageView.setImageBitmapResetBase(croppedImage, true);
                 imageView.center(true, true);
@@ -333,85 +314,21 @@ public class CropImageActivity extends MonitoredActivity {
         }
     }
 
-    @TargetApi(10)
     private Bitmap decodeRegionCrop(Rect rect, int outWidth, int outHeight) {
         // Release memory now
         clearImageView();
 
-        InputStream is = null;
         Bitmap croppedImage = null;
         try {
-            is = getContentResolver().openInputStream(sourceUri);
-            BitmapRegionDecoder decoder = BitmapRegionDecoder.newInstance(is, false);
-            final int width = decoder.getWidth();
-            final int height = decoder.getHeight();
-
-            if (exifRotation != 0) {
-                // Adjust crop area to account for image rotation
-                Matrix matrix = new Matrix();
-                matrix.setRotate(-exifRotation);
-
-                RectF adjusted = new RectF();
-                matrix.mapRect(adjusted, new RectF(rect));
-
-                // Adjust to account for origin at 0,0
-                adjusted.offset(adjusted.left < 0 ? width : 0, adjusted.top < 0 ? height : 0);
-                rect = new Rect((int) adjusted.left, (int) adjusted.top, (int) adjusted.right, (int) adjusted.bottom);
-            }
-
-            try {
-                BitmapFactory.Options opts = new BitmapFactory.Options();
-                opts.inSampleSize = calculateBitmapSampleSize(rect.width(), rect.height(), outWidth * 2, outHeight * 2);
-                croppedImage = decoder.decodeRegion(rect, opts);
-                if (croppedImage == null)
-                    throw new IllegalArgumentException("Error cropping image.");
-                if (opts.outWidth > outWidth || opts.outHeight > outHeight) {
-                    Matrix matrix = new Matrix();
-                    matrix.postScale((float) outWidth / opts.outWidth, (float) outHeight / opts.outHeight);
-                    croppedImage = Bitmap.createBitmap(croppedImage, 0, 0, opts.outWidth, opts.outHeight, matrix, true);
-                }
-            } catch (IllegalArgumentException e) {
-                // Rethrow with some extra information
-                throw new IllegalArgumentException("Rectangle " + rect + " is outside of the image ("
-                        + width + "," + height + "," + exifRotation + ")", e);
-            }
-
+            croppedImage = ImageUtil.decodeRegionCrop(this, sourceUri, exifRotation, rect, outWidth, outHeight);
         } catch (IOException e) {
             Log.e("Error cropping image: " + e.getMessage(), e);
+            setResultException(e);
             finish();
         } catch (OutOfMemoryError e) {
             Log.e("OOM cropping image: " + e.getMessage(), e);
             setResultException(e);
-        } finally {
-            CropUtil.closeSilently(is);
         }
-        return croppedImage;
-    }
-
-    private Bitmap inMemoryCrop(RotateBitmap rotateBitmap, Rect rect, int outWidth, int outHeight) {
-        // In-memory crop means potential OOM errors,
-        // but we have no choice as we can't selectively decode a bitmap with this API level
-        System.gc();
-
-        Bitmap croppedImage = null;
-        try {
-            croppedImage = Bitmap.createBitmap(outWidth, outHeight, Bitmap.Config.RGB_565);
-
-            Canvas canvas = new Canvas(croppedImage);
-            RectF dstRect = new RectF(0, 0, rect.width(), rect.height());
-
-            Matrix m = new Matrix();
-            m.setRectToRect(new RectF(rect), dstRect, Matrix.ScaleToFit.FILL);
-            m.preConcat(rotateBitmap.getRotateMatrix());
-            canvas.drawBitmap(rotateBitmap.getBitmap(), m, null);
-        } catch (OutOfMemoryError e) {
-            Log.e("OOM cropping image: " + e.getMessage(), e);
-            setResultException(e);
-            System.gc();
-        }
-
-        // Release Bitmap memory as soon as possible
-        clearImageView();
         return croppedImage;
     }
 
