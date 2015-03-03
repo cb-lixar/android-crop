@@ -34,6 +34,7 @@ import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.Arrays;
 
 /*
  * Modified from original in AOSP.
@@ -50,6 +51,40 @@ class CropUtil {
         } catch (Throwable t) {
             // Do nothing
         }
+    }
+
+    /**
+     * Retrieves EXIF Rotation tag from MediaStore, otherwise simply uses getFromMediaUri and getExifRotation.
+     * @param ctx Context.
+     * @param uri Uri of image to get EXIF rotation info from.
+     * @return Degrees of rotation; 0, 90, 180, or 270.
+     */
+    public static int getExifRotation(Context ctx, Uri uri) {
+        ContentResolver resolver = ctx.getContentResolver();
+        if (SCHEME_CONTENT.equals(uri.getScheme())) {
+            Cursor cursor = null;
+            try {
+                final String[] orientationCol = new String[] { MediaStore.Images.ImageColumns.ORIENTATION };
+                cursor = resolver.query(uri, orientationCol, null, null, null);
+                if (cursor != null && cursor.moveToFirst()) {
+                    final int columnIndex = cursor.getColumnIndex(MediaStore.Images.ImageColumns.ORIENTATION);
+                    if (columnIndex != -1) {
+                        // Orientation is returned in degrees
+                        int exifRotation = cursor.getInt(columnIndex);
+                        // If it is zero, it is possible that information was simply not stored.
+                        if (exifRotation != 0)
+                            return exifRotation;
+                    }
+                }
+            } catch (IllegalArgumentException | SecurityException e) {
+                // Not an image, or Google Drive image, or security exception (nothing we can do about)
+            } finally {
+                if (cursor != null) cursor.close();
+            }
+
+            return getExifRotation(getFromMediaUri(ctx, resolver, uri));
+        } else
+            return getExifRotation(getFromMediaUri(ctx, resolver, uri));
     }
 
     public static int getExifRotation(File imageFile) {
